@@ -10,31 +10,34 @@ from scapy.all import *
 conf.verb = 0
 peers = set()
 asnumber = None
-
+version = "0.1"
     
 class inject(threading.Thread):
-    def __init__(self, network, netmask):
+    def __init__(self, network, netmask, source_ip):
+	global asnumber
         self.network = network
         self.netmask = netmask
+	self.source_ip = source_ip
         threading.Thread.__init__(self)
-        
+        self.asn = asnumber
     def run(self):
         global peers
-        print peers
-        for peer in peers:
-            print "Sending route to %s" %peer
-            update = Ether()/IP()/EIGRP()
-            update.tlvlist = [EIGRPIntRoute()]
-            update[2].asn = asnumber.asn
-            update[3].nexthop = "0.0.0.0"
-            update[3].dst = self.network
-            update[1].src = source_ip
-            update[1].dst = peer
-            update[2].opcode = 1
-            update[3].prefixlen = self.netmask
-            sendp(update, iface = interface)
+        if peers:
+	    for peer in peers:
+		print "Sending route to %s" %peer
+		update = Ether()/IP()/EIGRP()
+		update.tlvlist = [EIGRPIntRoute()]
+		update[2].asn = self.asn
+		update[3].nexthop = "0.0.0.0"
+		update[3].dst = self.network
+		update[1].src = source_ip
+		update[1].dst = peer
+		update[2].opcode = 1
+		update[3].prefixlen = self.netmask
+		sendp(update, iface = interface)
+	else:
+	    print "\nGot no neighbours"
         #print "Route injected: %s/%i" %(self.network, self.netmask)
-
 class discover(threading.Thread):
     def __init__(self, interface):
         self.thread_alive = True
@@ -73,6 +76,7 @@ class say_ack(threading.Thread):
         upd[2].flags = 1L
         sendp(upd, iface = self.interface)    
     def run(self):
+	global peers
         while self.thread_alive:
             update = sniff(iface = self.interface, filter="ip[9:1] == 0x58", count = 1, timeout = 5)
             try:
@@ -80,6 +84,7 @@ class say_ack(threading.Thread):
                     self.seq = update[0][2].seq
                     #print "Sending ACK, SEQ: %s" %self.seq
                     self.peer = update[0][1].src
+		    peers.add(update[0][1].src)
                     self.sendAck()
             except:
                 pass
@@ -110,7 +115,7 @@ class main(cmd.Cmd):
 	global peers
 	self.peers = peers
         cmd.Cmd.__init__(self)
-        self.intro = "EIGRP route inector. Source: google/code"
+        self.intro = "EIGRP route injector, v%s. Source: http://code.google.com/p/coly/" %version
         self.ack_thread = None
         self.hello_thread = None
         self.discover_thread = None
@@ -132,11 +137,14 @@ class main(cmd.Cmd):
         try:
             self.network = address.split("/",1)[0]
             self.netmask = int(address.split("/",1)[1])
-            self.inject_thread = inject(self.network, self.netmask)
+            self.inject_thread = inject(self.network, self.netmask, self.source_ip)
             self.inject_thread.start()
         except:
             print "Arg error"
-        
+	    
+    def help_inject(self):
+	print "Injects defined route to EIGRP process. Ex: \"inject 192.168.1.0/24\""
+	
     def do_interface(self, interface):
         self.interface = interface
 	try:
@@ -146,6 +154,10 @@ class main(cmd.Cmd):
 	    print "Interface error: %s" %exc
 	except:
 	    print "Arg error"
+	    
+    def help_interface(self):
+	print "Set interface. Ex: \"interface eth0\""
+    
     
     def do_asn(self, asn):
         global asnumber
@@ -155,12 +167,18 @@ class main(cmd.Cmd):
 	except:
 	    print "Arg error"
    
+    def help_asn(self):
+	print "Manualy set EIGRP Autonomous System number. Ex: \"asn 10\""
+   
     def do_peers(self, emp):
 	if peers:
 	    for peer in peers:
 	    	print peer
 	else:
 	    print "I've got no peers"
+
+    def help_peers(self):
+	print "Prints active peers found on AS"
 
     def do_hi(self, args):
         global asnumber
@@ -173,11 +191,14 @@ class main(cmd.Cmd):
                 self.hello_thread.start()
                 print "Hello thread started"
             else:
-                print "Define interface"
+                print "No interface's defined"
         elif self.discover_thread:
 		print "Can't find any EIGRP processes. Set AS manually"
 	else:
             print "Set AS number with \"asn\" or use \"discover\""
+    
+    def help_hi(self):
+	print "Starts two threads: Hello thread, sends EIGRP Hello messages to multicast address\nACK thread, sends ACK Update response to Init Update packets"
     
     def do_discover(self, args):
         if self.interface:
@@ -185,11 +206,13 @@ class main(cmd.Cmd):
             self.discover_thread.start()
             print "Discovering Peers and AS"
         else:
-            print "Set interface"
+            print "No interface's defined"
         
+    def help_discover(self):
+	print "Listens for EIGRP Hello packets. Automatically determines active peers and AS running on broadcast domain"
 
     def do_exit(self, args):
-	print "Finishing active threads..."
+	print "\nFinishing active threads..."
         if self.hello_thread:
             self.hello_thread.exit()
         if self.ack_thread:
@@ -197,6 +220,9 @@ class main(cmd.Cmd):
         if self.discover_thread:
             self.discover_thread.exit()
         exit()
+    
+    def help_exit(self):
+	print "You know what it does :)"
 
 load_contrib("eigrp")
 main().cmdloop()
