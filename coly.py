@@ -30,7 +30,7 @@ class inject(threading.Thread):
 		update[2].asn = self.asn
 		update[3].nexthop = "0.0.0.0"
 		update[3].dst = self.network
-		update[1].src = source_ip
+		update[1].src = self.source_ip
 		update[1].dst = peer
 		update[2].opcode = 1
 		update[3].prefixlen = self.netmask
@@ -48,7 +48,7 @@ class discover(threading.Thread):
         while self.thread_alive:
             eigrp_packet = sniff(iface = self.interface, filter = "ip[9:1] == 0x58", count = 1, timeout = 5)
             try:
-                if eigrp_packet[0][2].opcode == 5 and eigrp_packet[0][1].src != source_ip:
+                if eigrp_packet[0][2].opcode == 5 and eigrp_packet[0][1].src != self.source_ip:
                     if eigrp_packet[0][1].src not in peers:
                         peers.add(eigrp_packet[0][1].src)
                         asnumber = eigrp_packet[0][2].asn
