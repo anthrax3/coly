@@ -93,8 +93,8 @@ class say_ack(threading.Thread):
                         print "\rPeer found: %s AS: %s \r" %(update[0][1].src, self.asn)
 			peers.add(update[0][1].src)
                     self.sendAck()
-            except IOError, e:
-                print e
+            except:
+                pass
     def exit(self):
         self.thread_alive = False
 
@@ -122,7 +122,7 @@ class main(cmd.Cmd):
 	global peers
 	self.peers = peers
         cmd.Cmd.__init__(self)
-        self.intro = "EIGRP route injector, v%s. Source: http://code.google.com/p/coly/" %version
+        self.intro = "EIGRP route injector, v%s Source: http://code.google.com/p/coly/" %version
         self.ack_thread = None
         self.hello_thread = None
         self.discover_thread = None
